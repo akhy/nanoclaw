@@ -455,11 +455,17 @@ function acquirePidLock(): void {
     if (pid) {
       try {
         process.kill(pid, 0); // Check if process is alive
-        logger.fatal({ pid, pidFile: PID_FILE }, 'Another instance is already running');
+        logger.fatal(
+          { pid, pidFile: PID_FILE },
+          'Another instance is already running',
+        );
         process.exit(1);
       } catch {
         // Stale PID — process is gone, overwrite
-        logger.warn({ pid, pidFile: PID_FILE }, 'Stale PID file found, overwriting');
+        logger.warn(
+          { pid, pidFile: PID_FILE },
+          'Stale PID file found, overwriting',
+        );
       }
     }
   } catch {

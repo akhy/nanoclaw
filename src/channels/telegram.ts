@@ -67,10 +67,13 @@ export class TelegramChannel implements Channel {
       if (!arg) {
         const settings = readGroupSettings(group.folder);
         const current = settings.model || DEFAULT_MODEL;
-        const lines = AVAILABLE_MODELS.map((m) =>
-          `${m.id === current ? '✓' : '·'} \`${m.shorthand}\` — ${m.label}`
+        const lines = AVAILABLE_MODELS.map(
+          (m) =>
+            `${m.id === current ? '✓' : '·'} \`${m.shorthand}\` — ${m.label}`,
         );
-        ctx.reply(`Current model: \`${current}\`\n\n${lines.join('\n')}`, { parse_mode: 'Markdown' });
+        ctx.reply(`Current model: \`${current}\`\n\n${lines.join('\n')}`, {
+          parse_mode: 'Markdown',
+        });
         return;
       }
 
@@ -84,7 +87,10 @@ export class TelegramChannel implements Channel {
       const settings = readGroupSettings(group.folder);
       writeGroupSettings(group.folder, { ...settings, model: resolved });
       const info = AVAILABLE_MODELS.find((m) => m.id === resolved)!;
-      ctx.reply(`Model set to \`${resolved}\` (${info.label}). Takes effect on the next message.`, { parse_mode: 'Markdown' });
+      ctx.reply(
+        `Model set to \`${resolved}\` (${info.label}). Takes effect on the next message.`,
+        { parse_mode: 'Markdown' },
+      );
     });
 
     this.bot.on('message:text', async (ctx) => {
@@ -129,8 +135,15 @@ export class TelegramChannel implements Channel {
       }
 
       // Store chat metadata for discovery
-      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(chatJid, timestamp, chatName, 'telegram', isGroup);
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        chatName,
+        'telegram',
+        isGroup,
+      );
 
       // Only deliver full message for registered groups
       const group = this.opts.registeredGroups()[chatJid];
@@ -173,8 +186,15 @@ export class TelegramChannel implements Channel {
         'Unknown';
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
 
-      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
       this.opts.onMessage(chatJid, {
         id: ctx.message.message_id.toString(),
         chat_jid: chatJid,
@@ -188,9 +208,7 @@ export class TelegramChannel implements Channel {
 
     this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) =>
-      storeNonText(ctx, '[Voice message]'),
-    );
+    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
     this.bot.on('message:document', (ctx) => {
       const name = ctx.message.document?.file_name || 'file';
@@ -221,10 +239,21 @@ export class TelegramChannel implements Channel {
             `  Send /chatid to the bot to get a chat's registration ID\n`,
           );
           this.bot!.api.setMyCommands([
-            { command: 'chatid', description: 'Get this chat\'s registration ID' },
-            { command: 'ping', description: `Check if ${ASSISTANT_NAME} is online` },
-            { command: 'model', description: 'View or change the AI model (opus/sonnet/haiku)' },
-          ]).catch((err) => logger.warn({ err }, 'Failed to register Telegram commands'));
+            {
+              command: 'chatid',
+              description: "Get this chat's registration ID",
+            },
+            {
+              command: 'ping',
+              description: `Check if ${ASSISTANT_NAME} is online`,
+            },
+            {
+              command: 'model',
+              description: 'View or change the AI model (opus/sonnet/haiku)',
+            },
+          ]).catch((err) =>
+            logger.warn({ err }, 'Failed to register Telegram commands'),
+          );
           resolve();
         },
       });

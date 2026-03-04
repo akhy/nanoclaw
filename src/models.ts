@@ -5,9 +5,21 @@ export interface ModelInfo {
 }
 
 export const AVAILABLE_MODELS: ModelInfo[] = [
-  { id: 'claude-opus-4-6',           shorthand: 'opus',   label: 'Claude Opus 4.6 (most capable)' },
-  { id: 'claude-sonnet-4-6',         shorthand: 'sonnet', label: 'Claude Sonnet 4.6 (balanced)' },
-  { id: 'claude-haiku-4-5-20251001', shorthand: 'haiku',  label: 'Claude Haiku 4.5 (fastest)' },
+  {
+    id: 'claude-opus-4-6',
+    shorthand: 'opus',
+    label: 'Claude Opus 4.6 (most capable)',
+  },
+  {
+    id: 'claude-sonnet-4-6',
+    shorthand: 'sonnet',
+    label: 'Claude Sonnet 4.6 (balanced)',
+  },
+  {
+    id: 'claude-haiku-4-5-20251001',
+    shorthand: 'haiku',
+    label: 'Claude Haiku 4.5 (fastest)',
+  },
 ];
 
 export const DEFAULT_MODEL = 'claude-sonnet-4-6';
