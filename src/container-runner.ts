@@ -4,6 +4,7 @@
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -24,7 +25,28 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { validateAdditionalMounts } from './mount-security.js';
+import { DEFAULT_MODEL, resolveModel } from './models.js';
 import { RegisteredGroup } from './types.js';
+
+export interface GroupSettings {
+  model?: string;
+}
+
+export function readGroupSettings(groupFolder: string): GroupSettings {
+  const settingsPath = path.join(resolveGroupFolderPath(groupFolder), 'settings.json');
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+  } catch {
+    return {};
+  }
+}
+
+export function writeGroupSettings(groupFolder: string, settings: GroupSettings): void {
+  const groupDir = resolveGroupFolderPath(groupFolder);
+  fs.mkdirSync(groupDir, { recursive: true });
+  const settingsPath = path.join(groupDir, 'settings.json');
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+}
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -38,6 +60,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  model?: string;
   secrets?: Record<string, string>;
 }
 
@@ -157,7 +180,7 @@ function buildVolumeMounts(
   }
   mounts.push({
     hostPath: groupSessionsDir,
-    containerPath: '/home/node/.claude',
+    containerPath: path.join(os.homedir(), '.claude'),
     readonly: false,
   });
 
@@ -197,6 +220,59 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Mount gh (GitHub CLI) config
+  const ghConfigDir = path.join(os.homedir(), '.config', 'gh');
+  if (fs.existsSync(ghConfigDir)) {
+    mounts.push({
+      hostPath: ghConfigDir,
+      containerPath: ghConfigDir,
+      readonly: true,
+    });
+  }
+
+  // Mount gogcli config so the agent can use GOG credentials
+  const gogcliDir = path.join(os.homedir(), '.config', 'gogcli');
+  if (fs.existsSync(gogcliDir)) {
+    mounts.push({
+      hostPath: gogcliDir,
+      containerPath: gogcliDir,
+      readonly: false,
+    });
+  }
+
+  // Mount SSH keys so the agent can SSH into remote hosts.
+  // Private/public keys are read-only; known_hosts is read-write so ssh can
+  // record new host fingerprints on first connect.
+  const sshDir = path.join(os.homedir(), '.ssh');
+  for (const file of ['id_rsa', 'id_rsa.pub']) {
+    const p = path.join(sshDir, file);
+    if (fs.existsSync(p)) {
+      mounts.push({ hostPath: p, containerPath: p, readonly: true });
+    }
+  }
+  const knownHostsPath = path.join(sshDir, 'known_hosts');
+  if (fs.existsSync(knownHostsPath)) {
+    mounts.push({ hostPath: knownHostsPath, containerPath: knownHostsPath, readonly: false });
+  }
+
+  // Mount host ~/.local/bin so tools installed on the host are available in the container
+  const hostLocalBin = path.join(os.homedir(), '.local', 'bin');
+  if (fs.existsSync(hostLocalBin)) {
+    mounts.push({
+      hostPath: hostLocalBin,
+      containerPath: hostLocalBin,
+      readonly: true,
+    });
+  }
+
+  // Mount host user/group databases so UID/GID numbers resolve to the same
+  // usernames inside the container as on the host
+  for (const f of ['/etc/passwd', '/etc/group']) {
+    if (fs.existsSync(f)) {
+      mounts.push({ hostPath: f, containerPath: f, readonly: true });
+    }
+  }
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
@@ -229,17 +305,44 @@ function buildContainerArgs(
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
+  // Share the host network namespace so the container can reach Tailscale
+  // (and any other host-level network interfaces like VPNs).
+  args.push('--network=host');
+
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Run as host user so bind-mounted files are accessible.
-  // Skip when running as root (uid 0), as the container's node user (uid 1000),
-  // or when getuid is unavailable (native Windows without WSL).
+  // Add ~/.local/bin to PATH so host-installed binaries are discoverable
+  args.push('-e', `PATH=${path.join(os.homedir(), '.local', 'bin')}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`);
+
+  // App config — read from .env file since the host process doesn't load .env into process.env
+  const appConfig = readEnvFile(['FIZZY_API_URL', 'FIZZY_TOKEN', 'GOG_ACCOUNT', 'GOG_KEYRING_PASSWORD', 'MEMOS_URL', 'MEMOS_ACCESS_TOKEN']);
+  if (appConfig.FIZZY_API_URL) {
+    args.push('-e', `FIZZY_API_URL=${appConfig.FIZZY_API_URL}`);
+  }
+  if (appConfig.FIZZY_TOKEN) {
+    args.push('-e', `FIZZY_TOKEN=${appConfig.FIZZY_TOKEN}`);
+  }
+  if (appConfig.GOG_ACCOUNT) {
+    args.push('-e', `GOG_ACCOUNT=${appConfig.GOG_ACCOUNT}`);
+  }
+  if (appConfig.GOG_KEYRING_PASSWORD) {
+    args.push('-e', `GOG_KEYRING_PASSWORD=${appConfig.GOG_KEYRING_PASSWORD}`);
+  }
+  if (appConfig.MEMOS_URL) {
+    args.push('-e', `MEMOS_URL=${appConfig.MEMOS_URL}`);
+  }
+  if (appConfig.MEMOS_ACCESS_TOKEN) {
+    args.push('-e', `MEMOS_ACCESS_TOKEN=${appConfig.MEMOS_ACCESS_TOKEN}`);
+  }
+
+  // Run as host user so bind-mounted files are accessible and UID/GID match the host.
+  // Skip only when running as root (uid 0) or when getuid is unavailable (Windows without WSL).
   const hostUid = process.getuid?.();
   const hostGid = process.getgid?.();
-  if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
+  if (hostUid != null && hostUid !== 0) {
     args.push('--user', `${hostUid}:${hostGid}`);
-    args.push('-e', 'HOME=/home/node');
+    args.push('-e', `HOME=${os.homedir()}`);
   }
 
   for (const mount of mounts) {
@@ -265,6 +368,12 @@ export async function runContainerAgent(
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
+
+  // Inject model from group settings if not already set by caller
+  if (!input.model) {
+    const settings = readGroupSettings(group.folder);
+    input.model = resolveModel(settings.model || '') || DEFAULT_MODEL;
+  }
 
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');

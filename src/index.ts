@@ -4,6 +4,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   IDLE_TIMEOUT,
+  PID_FILE,
   POLL_INTERVAL,
   TRIGGER_PATTERN,
 } from './config.js';
@@ -447,7 +448,36 @@ function ensureContainerSystemRunning(): void {
   cleanupOrphans();
 }
 
+function acquirePidLock(): void {
+  try {
+    const existing = fs.readFileSync(PID_FILE, 'utf-8').trim();
+    const pid = parseInt(existing, 10);
+    if (pid) {
+      try {
+        process.kill(pid, 0); // Check if process is alive
+        logger.fatal({ pid, pidFile: PID_FILE }, 'Another instance is already running');
+        process.exit(1);
+      } catch {
+        // Stale PID — process is gone, overwrite
+        logger.warn({ pid, pidFile: PID_FILE }, 'Stale PID file found, overwriting');
+      }
+    }
+  } catch {
+    // File doesn't exist — proceed
+  }
+  fs.writeFileSync(PID_FILE, String(process.pid));
+}
+
+function releasePidLock(): void {
+  try {
+    fs.unlinkSync(PID_FILE);
+  } catch {
+    // Already removed — ignore
+  }
+}
+
 async function main(): Promise<void> {
+  acquirePidLock();
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
@@ -458,6 +488,7 @@ async function main(): Promise<void> {
     logger.info({ signal }, 'Shutdown signal received');
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
+    releasePidLock();
     process.exit(0);
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
