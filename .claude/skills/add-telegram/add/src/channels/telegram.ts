@@ -3,6 +3,8 @@ import { Bot } from 'grammy';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
+import { AVAILABLE_MODELS, DEFAULT_MODEL, resolveModel } from '../models.js';
+import { readGroupSettings, writeGroupSettings } from '../container-runner.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
@@ -50,6 +52,45 @@ export class TelegramChannel implements Channel {
     // Command to check bot status
     this.bot.command('ping', (ctx) => {
       ctx.reply(`${ASSISTANT_NAME} is online.`);
+    });
+
+    // Command to view or change the model for this chat
+    this.bot.command('model', (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) {
+        ctx.reply('This chat is not registered.');
+        return;
+      }
+
+      const arg = ctx.match?.trim();
+      if (!arg) {
+        const settings = readGroupSettings(group.folder);
+        const current = settings.model || DEFAULT_MODEL;
+        const lines = AVAILABLE_MODELS.map(
+          (m) =>
+            `${m.id === current ? '✓' : '·'} \`${m.shorthand}\` — ${m.label}`,
+        );
+        ctx.reply(`Current model: \`${current}\`\n\n${lines.join('\n')}`, {
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+
+      const resolved = resolveModel(arg);
+      if (!resolved) {
+        const shorthands = AVAILABLE_MODELS.map((m) => m.shorthand).join(', ');
+        ctx.reply(`Unknown model "${arg}". Available: ${shorthands}`);
+        return;
+      }
+
+      const settings = readGroupSettings(group.folder);
+      writeGroupSettings(group.folder, { ...settings, model: resolved });
+      const info = AVAILABLE_MODELS.find((m) => m.id === resolved)!;
+      ctx.reply(
+        `Model set to \`${resolved}\` (${info.label}). Takes effect on the next message.`,
+        { parse_mode: 'Markdown' },
+      );
     });
 
     this.bot.on('message:text', async (ctx) => {
@@ -184,6 +225,22 @@ export class TelegramChannel implements Channel {
           console.log(`\n  Telegram bot: @${botInfo.username}`);
           console.log(
             `  Send /chatid to the bot to get a chat's registration ID\n`,
+          );
+          this.bot!.api.setMyCommands([
+            {
+              command: 'chatid',
+              description: "Get this chat's registration ID",
+            },
+            {
+              command: 'ping',
+              description: `Check if ${ASSISTANT_NAME} is online`,
+            },
+            {
+              command: 'model',
+              description: 'View or change the AI model (opus/sonnet/haiku)',
+            },
+          ]).catch((err) =>
+            logger.warn({ err }, 'Failed to register Telegram commands'),
           );
           resolve();
         },
