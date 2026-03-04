@@ -16,7 +16,7 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
-import { readEnvFile } from './env.js';
+import { readAllEnvVars, readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -33,7 +33,10 @@ export interface GroupSettings {
 }
 
 export function readGroupSettings(groupFolder: string): GroupSettings {
-  const settingsPath = path.join(resolveGroupFolderPath(groupFolder), 'settings.json');
+  const settingsPath = path.join(
+    resolveGroupFolderPath(groupFolder),
+    'settings.json',
+  );
   try {
     return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
   } catch {
@@ -41,7 +44,10 @@ export function readGroupSettings(groupFolder: string): GroupSettings {
   }
 }
 
-export function writeGroupSettings(groupFolder: string, settings: GroupSettings): void {
+export function writeGroupSettings(
+  groupFolder: string,
+  settings: GroupSettings,
+): void {
   const groupDir = resolveGroupFolderPath(groupFolder);
   fs.mkdirSync(groupDir, { recursive: true });
   const settingsPath = path.join(groupDir, 'settings.json');
@@ -252,7 +258,11 @@ function buildVolumeMounts(
   }
   const knownHostsPath = path.join(sshDir, 'known_hosts');
   if (fs.existsSync(knownHostsPath)) {
-    mounts.push({ hostPath: knownHostsPath, containerPath: knownHostsPath, readonly: false });
+    mounts.push({
+      hostPath: knownHostsPath,
+      containerPath: knownHostsPath,
+      readonly: false,
+    });
   }
 
   // Mount host ~/.local/bin so tools installed on the host are available in the container
@@ -313,27 +323,17 @@ function buildContainerArgs(
   args.push('-e', `TZ=${TIMEZONE}`);
 
   // Add ~/.local/bin to PATH so host-installed binaries are discoverable
-  args.push('-e', `PATH=${path.join(os.homedir(), '.local', 'bin')}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`);
+  args.push(
+    '-e',
+    `PATH=${path.join(os.homedir(), '.local', 'bin')}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`,
+  );
 
-  // App config — read from .env file since the host process doesn't load .env into process.env
-  const appConfig = readEnvFile(['FIZZY_API_URL', 'FIZZY_TOKEN', 'GOG_ACCOUNT', 'GOG_KEYRING_PASSWORD', 'MEMOS_URL', 'MEMOS_ACCESS_TOKEN']);
-  if (appConfig.FIZZY_API_URL) {
-    args.push('-e', `FIZZY_API_URL=${appConfig.FIZZY_API_URL}`);
-  }
-  if (appConfig.FIZZY_TOKEN) {
-    args.push('-e', `FIZZY_TOKEN=${appConfig.FIZZY_TOKEN}`);
-  }
-  if (appConfig.GOG_ACCOUNT) {
-    args.push('-e', `GOG_ACCOUNT=${appConfig.GOG_ACCOUNT}`);
-  }
-  if (appConfig.GOG_KEYRING_PASSWORD) {
-    args.push('-e', `GOG_KEYRING_PASSWORD=${appConfig.GOG_KEYRING_PASSWORD}`);
-  }
-  if (appConfig.MEMOS_URL) {
-    args.push('-e', `MEMOS_URL=${appConfig.MEMOS_URL}`);
-  }
-  if (appConfig.MEMOS_ACCESS_TOKEN) {
-    args.push('-e', `MEMOS_ACCESS_TOKEN=${appConfig.MEMOS_ACCESS_TOKEN}`);
+  // App config — all vars from .env.runner are forwarded to the container.
+  // Keep agent/channel secrets (CLAUDE_CODE_OAUTH_TOKEN, TELEGRAM_BOT_TOKEN,
+  // ASSISTANT_NAME, etc.) in .env only — they are never forwarded here.
+  const runnerEnv = readAllEnvVars(path.join(process.cwd(), '.env.runner'));
+  for (const [key, value] of Object.entries(runnerEnv)) {
+    args.push('-e', `${key}=${value}`);
   }
 
   // Run as host user so bind-mounted files are accessible and UID/GID match the host.

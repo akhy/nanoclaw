@@ -40,3 +40,34 @@ export function readEnvFile(keys: string[]): Record<string, string> {
 
   return result;
 }
+
+/**
+ * Parse all key=value pairs from a file, returning every non-comment entry.
+ * Returns an empty object if the file does not exist.
+ */
+export function readAllEnvVars(filePath: string): Record<string, string> {
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return {};
+  }
+
+  const result: Record<string, string> = {};
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    let value = trimmed.slice(eqIdx + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (key) result[key] = value;
+  }
+  return result;
+}
